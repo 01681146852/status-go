@@ -2,6 +2,7 @@ package server
 
 import (
 	"database/sql"
+	"go.uber.org/zap"
 	"net/url"
 
 	"github.com/status-im/status-go/ipfs"
@@ -26,11 +27,19 @@ func NewMediaServer(db *sql.DB, downloader *ipfs.Downloader) (*MediaServer, erro
 		db:         db,
 		downloader: downloader,
 	}
+	s.SetHandlers(HandlerPatternMap{
+		imagesPath:     handleImage(s.db, s.logger),
+		audioPath:      handleAudio(s.db, s.logger),
+		identiconsPath: handleIdenticon(s.logger),
+		ipfsPath:       handleIPFS(s.downloader, s.logger),
+	})
 
 	return s, nil
 }
 
-func (s *MediaServer) WithMediaHandlers() {
+func (s *MediaServer) withMediaHandlers() {
+	l := s.logger.Named("withMediaHandlers").With(zap.String("name", "withMediaHandlers"))
+	l.Info("has been fired")
 	s.WithHandlers(HandlerPatternMap{
 		imagesPath:     handleImage(s.db, s.logger),
 		audioPath:      handleAudio(s.db, s.logger),
