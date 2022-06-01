@@ -713,7 +713,7 @@ func (m *Messenger) EditCommunity(request *requests.EditCommunity) (*MessengerRe
 
 	id := community.ID()
 
-	if m.config.torrentConfig.Enabled {
+	if m.config.torrentConfig != nil && m.config.torrentConfig.Enabled {
 		if !communitySettings.HistoryArchiveSupportEnabled {
 			m.communitiesManager.StopHistoryArchiveTasksInterval(id)
 		} else if !m.communitiesManager.IsSeedingHistoryArchiveTorrent(id) {
@@ -726,6 +726,10 @@ func (m *Messenger) EditCommunity(request *requests.EditCommunity) (*MessengerRe
 	response := &MessengerResponse{}
 	response.AddCommunity(community)
 	response.AddCommunitySettings(&communitySettings)
+	err = m.SyncCommunitySettings(context.Background(), &communitySettings)
+	if err != nil {
+		return nil, err
+	}
 
 	return response, nil
 }
@@ -1162,6 +1166,12 @@ func (m *Messenger) handleSyncCommunity(messageState *ReceivedMessageState, sync
 		return err
 	}
 
+	err = m.handleSyncCommunitySettings(messageState, *syncCommunity.Settings)
+	if err != nil {
+		logger.Debug("m.handleSyncCommunitySettings error", zap.Error(err))
+		return err
+	}
+
 	// associate private key with community if set
 	if syncCommunity.PrivateKey != nil {
 		orgPrivKey, err := crypto.ToECDSA(syncCommunity.PrivateKey)
@@ -1206,6 +1216,48 @@ func (m *Messenger) handleSyncCommunity(messageState *ReceivedMessageState, sync
 		return err
 	}
 
+	return nil
+}
+
+func (m *Messenger) handleSyncCommunitySettings(messageState *ReceivedMessageState, syncCommunitySettings protobuf.SyncCommunitySettings) error {
+	shouldHandle, err := m.communitiesManager.ShouldHandleSyncCommunitySettings(&syncCommunitySettings)
+	if err != nil {
+		m.logger.Debug("m.communitiesManager.ShouldHandleSyncCommunitySettings error", zap.Error(err))
+		return err
+	}
+	m.logger.Debug("ShouldHandleSyncCommunity result", zap.Bool("shouldHandle", shouldHandle))
+	if !shouldHandle {
+		return nil
+	}
+
+	communitySettings, err := m.communitiesManager.HandleSyncCommunitySettings(&syncCommunitySettings)
+	if err != nil {
+		return err
+	}
+
+	if m.config.torrentConfig != nil && m.config.torrentConfig.Enabled {
+		id, err := types.DecodeHex(communitySettings.CommunityID)
+		if err != nil {
+			return err
+		}
+
+		if !communitySettings.HistoryArchiveSupportEnabled {
+			m.communitiesManager.StopHistoryArchiveTasksInterval(id)
+		} else if !m.communitiesManager.IsSeedingHistoryArchiveTorrent(id) {
+
+			var communities []*communities.Community
+
+			c, err := m.communitiesManager.GetByIDString(communitySettings.CommunityID)
+			if err != nil {
+				return err
+			}
+
+			communities = append(communities, c)
+			go m.InitHistoryArchiveTasks(communities)
+		}
+	}
+
+	messageState.Response.AddCommunitySettings(communitySettings)
 	return nil
 }
 
@@ -1424,4 +1476,36 @@ func (m *Messenger) GetCommunitiesSettings() ([]communities.CommunitySettings, e
 		return nil, err
 	}
 	return settings, nil
+}
+
+func (m *Messenger) SyncCommunitySettings(ctx context.Context, settings *communities.CommunitySettings) error {
+
+	if !m.hasPairedDevices() {
+		return nil
+	}
+
+	clock, chat := m.getLastClockWithRelatedChat()
+
+	syncMessage := &protobuf.SyncCommunitySettings{
+		Clock:                        clock,
+		CommunityId:                  settings.CommunityID,
+		HistoryArchiveSupportEnabled: settings.HistoryArchiveSupportEnabled,
+	}
+	encodedMessage, err := proto.Marshal(syncMessage)
+	if err != nil {
+		return err
+	}
+
+	_, err = m.dispatchMessage(ctx, common.RawMessage{
+		LocalChatID:         chat.ID,
+		Payload:             encodedMessage,
+		MessageType:         protobuf.ApplicationMetadataMessage_SYNC_COMMUNITY_SETTINGS,
+		ResendAutomatically: true,
+	})
+	if err != nil {
+		return err
+	}
+
+	chat.LastClockValue = clock
+	return m.saveChat(chat)
 }

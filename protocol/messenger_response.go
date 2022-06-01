@@ -197,6 +197,7 @@ func (r *MessengerResponse) IsEmpty() bool {
 		len(r.Invitations)+
 		len(r.EmojiReactions)+
 		len(r.communities)+
+		len(r.communitiesSettings)+
 		len(r.CommunityChanges)+
 		len(r.removedChats)+
 		len(r.removedMessages)+
