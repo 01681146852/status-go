@@ -38,23 +38,6 @@ func (p *Persistence) SaveCommunity(community *Community) error {
 	return err
 }
 
-func (p *Persistence) ShouldHandleSyncCommunitySettings(settings *protobuf.SyncCommunitySettings) (bool, error) {
-
-	qr := p.db.QueryRow(`SELECT * FROM communities_settings WHERE community_id = ? AND clock > ?`, settings.CommunityId, settings.Clock)
-	_, err := p.scanRowToStruct(qr.Scan)
-	switch err {
-	case sql.ErrNoRows:
-		// Query does not match, therefore clock value is not older than the new clock value or id was not found
-		return true, nil
-	case nil:
-		// Error is nil, therefore query matched and clock is older than the new clock
-		return false, nil
-	default:
-		// Error is not nil and is not sql.ErrNoRows, therefore pass out the error
-		return false, err
-	}
-}
-
 func (p *Persistence) ShouldHandleSyncCommunity(community *protobuf.SyncCommunity) (bool, error) {
 	// TODO see if there is a way to make this more elegant
 	// Keep the "*".
@@ -536,7 +519,7 @@ func (p *Persistence) SaveMessageArchiveID(communityID types.HexBytes, hash stri
 }
 
 func (p *Persistence) GetCommunitiesSettings() ([]CommunitySettings, error) {
-	rows, err := p.db.Query("SELECT community_id, message_archive_seeding_enabled, message_archive_fetching_enabled, clock FROM communities_settings")
+	rows, err := p.db.Query("SELECT community_id, message_archive_seeding_enabled, message_archive_fetching_enabled FROM communities_settings")
 	if err != nil {
 		return nil, err
 	}
@@ -545,7 +528,7 @@ func (p *Persistence) GetCommunitiesSettings() ([]CommunitySettings, error) {
 
 	for rows.Next() {
 		settings := CommunitySettings{}
-		err := rows.Scan(&settings.CommunityID, &settings.HistoryArchiveSupportEnabled, &settings.HistoryArchiveSupportEnabled, &settings.Clock)
+		err := rows.Scan(&settings.CommunityID, &settings.HistoryArchiveSupportEnabled, &settings.HistoryArchiveSupportEnabled)
 		if err != nil {
 			return nil, err
 		}
@@ -565,7 +548,7 @@ func (p *Persistence) CommunitySettingsExist(communityID types.HexBytes) (bool, 
 
 func (p *Persistence) GetCommunitySettingsByID(communityID types.HexBytes) (*CommunitySettings, error) {
 	settings := CommunitySettings{}
-	err := p.db.QueryRow(`SELECT community_id, message_archive_seeding_enabled, message_archive_fetching_enabled, clock FROM communities_settings WHERE community_id = ?`, communityID.String()).Scan(&settings.CommunityID, &settings.HistoryArchiveSupportEnabled, &settings.HistoryArchiveSupportEnabled, &settings.Clock)
+	err := p.db.QueryRow(`SELECT community_id, message_archive_seeding_enabled, message_archive_fetching_enabled FROM communities_settings WHERE community_id = ?`, communityID.String()).Scan(&settings.CommunityID, &settings.HistoryArchiveSupportEnabled, &settings.HistoryArchiveSupportEnabled)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	} else if err != nil {
@@ -583,13 +566,11 @@ func (p *Persistence) SaveCommunitySettings(communitySettings CommunitySettings)
 	_, err := p.db.Exec(`INSERT INTO communities_settings (
     community_id,
     message_archive_seeding_enabled,
-    message_archive_fetching_enabled,
-    clock
-  ) VALUES (?, ?, ?, ?)`,
+    message_archive_fetching_enabled
+  ) VALUES (?, ?, ?)`,
 		communitySettings.CommunityID,
 		communitySettings.HistoryArchiveSupportEnabled,
 		communitySettings.HistoryArchiveSupportEnabled,
-		communitySettings.Clock,
 	)
 	return err
 }
@@ -597,13 +578,11 @@ func (p *Persistence) SaveCommunitySettings(communitySettings CommunitySettings)
 func (p *Persistence) UpdateCommunitySettings(communitySettings CommunitySettings) error {
 	_, err := p.db.Exec(`UPDATE communities_settings SET
     message_archive_seeding_enabled = ?,
-    message_archive_fetching_enabled = ?,
-    clock = ?
+    message_archive_fetching_enabled = ?
     WHERE community_id = ?`,
 		communitySettings.HistoryArchiveSupportEnabled,
 		communitySettings.HistoryArchiveSupportEnabled,
 		communitySettings.CommunityID,
-		communitySettings.Clock,
 	)
 	return err
 }
